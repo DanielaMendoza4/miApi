@@ -11,12 +11,28 @@ router.get('/', async (req, res) => {
   try {
     const movimientos = await Movimiento.findAll({
       include: [
-        { model: Producto, attributes: ['id', 'nombre'] },
-        { model: Usuario, attributes: ['id', 'nombre'] },
+        { model: Producto, attributes: ['id', 'nombre', 'stock', 'precio'] },
+        { model: Usuario, attributes: ['id', 'nombre', 'email'] },
       ],
-      order: [['fecha_hora', 'DESC']],
+      order: [['fecha_hora', 'DESC'], ['id', 'DESC']],
     });
     res.json(movimientos);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /:id: detalle de un movimiento
+router.get('/:id', async (req, res) => {
+  try {
+    const mov = await Movimiento.findByPk(req.params.id, {
+      include: [
+        { model: Producto, attributes: ['id', 'nombre', 'stock', 'precio'] },
+        { model: Usuario, attributes: ['id', 'nombre', 'email'] },
+      ],
+    });
+    if (!mov) return res.status(404).json({ error: 'Movimiento no encontrado' });
+    res.json(mov);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -46,7 +62,7 @@ router.post('/', async (req, res) => {
     await producto.save({ transaction: t });
 
     const movimiento = await Movimiento.create(
-      { producto_id, usuario_id, tipo_movimiento, cantidad: cant, observaciones },
+      { producto_id, usuario_id, tipo_movimiento, cantidad: cant, observaciones, fecha_hora: new Date() },
       { transaction: t }
     );
 
@@ -60,5 +76,40 @@ router.post('/', async (req, res) => {
     });
   }
 });
+
+// Anular movimiento (reversión de stock en transacción)
+const anularMovimiento = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const movimiento = await Movimiento.findByPk(req.params.id, { transaction: t });
+    if (!movimiento) throw errorHttp(404, 'Movimiento no encontrado');
+
+    const producto = await Producto.findByPk(movimiento.producto_id, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!producto) throw errorHttp(404, 'Producto asociado no existe');
+
+    // Revertir efecto del movimiento
+    // Si fue Entrada (+cant), ahora restamos cant
+    // Si fue Salida (-cant), ahora sumamos cant
+    // Si fue Ajuste (+/-cant), restamos cant
+    const deltaReverso = movimiento.tipo_movimiento === 'Salida' ? movimiento.cantidad : -movimiento.cantidad;
+    if (producto.stock + deltaReverso < 0) {
+      throw errorHttp(400, 'No se puede anular: el stock resultante sería negativo');
+    }
+
+    producto.stock += deltaReverso;
+    await producto.save({ transaction: t });
+
+    await movimiento.destroy({ transaction: t });
+
+    await t.commit();
+    res.json({ message: 'Movimiento anulado y stock revertido correctamente', stock_actual: producto.stock });
+  } catch (error) {
+    await t.rollback();
+    res.status(error.status || 500).json({ error: error.message });
+  }
+};
+
+router.put('/:id/anular', anularMovimiento);
+router.delete('/:id', anularMovimiento);
 
 module.exports = router;

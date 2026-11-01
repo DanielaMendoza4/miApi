@@ -1,6 +1,6 @@
 const express = require('express');
 
-// Genera un CRUD completo (GET, POST, PUT, DELETE) para cualquier modelo.
+// Genera un CRUD completo (GET, GET /:id, POST, PUT, DELETE) para cualquier modelo.
 // required: campos obligatorios al crear. include: relaciones a incluir al listar.
 module.exports = (Model, { include = [], required = [] } = {}) => {
   const router = express.Router();
@@ -19,6 +19,14 @@ module.exports = (Model, { include = [], required = [] } = {}) => {
     } catch (error) { fallo(res, error); }
   });
 
+  router.get('/:id', async (req, res) => {
+    try {
+      const registro = await Model.findByPk(req.params.id, { include });
+      if (!registro) return res.status(404).json({ error: 'No encontrado' });
+      res.json(registro);
+    } catch (error) { fallo(res, error); }
+  });
+
   router.post('/', async (req, res) => {
     try {
       const faltan = required.filter((c) => [undefined, null, ''].includes(req.body[c]));
@@ -33,7 +41,12 @@ module.exports = (Model, { include = [], required = [] } = {}) => {
     try {
       const registro = await Model.findByPk(req.params.id);
       if (!registro) return res.status(404).json({ error: 'No encontrado' });
-      await registro.update(req.body);
+      const datos = { ...req.body };
+      // Si el campo password está vacío al editar usuario, no sobreescribir la contraseña existente
+      if ('password' in datos && (datos.password === '' || datos.password === null || datos.password === undefined)) {
+        delete datos.password;
+      }
+      await registro.update(datos);
       res.json(registro);
     } catch (error) { fallo(res, error); }
   });

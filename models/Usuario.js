@@ -11,6 +11,11 @@ const Usuario = sequelize.define('Usuario', {
     allowNull: false,
     defaultValue: 'Almacenero',
   },
+  estado: {
+    type: DataTypes.ENUM('Activo', 'Inactivo'),
+    allowNull: false,
+    defaultValue: 'Activo',
+  },
 }, {
   tableName: 'Usuarios',
   // la contraseña nunca se devuelve en las respuestas
