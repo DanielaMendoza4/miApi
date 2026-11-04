@@ -7,7 +7,7 @@ const crud = (ruta, etiqueta, ejemplo) => {
     content: { 'application/json': { schema: { type: 'object', example: ejemplo } } },
   };
   const id = [{ in: 'path', name: 'id', required: true, schema: { type: 'integer' } }];
-  const ok = { 200: { description: 'OK' } };
+  const ok = { 200: { description: 'OK' }, 401: { description: 'Token inválido o ausente' } };
   return {
     [`/${ruta}`]: {
       get: { tags: [etiqueta], summary: `Listar ${etiqueta}`, responses: ok },
@@ -21,6 +21,35 @@ const crud = (ruta, etiqueta, ejemplo) => {
 };
 
 const paths = {
+  '/auth/login': {
+    post: {
+      tags: ['Auth'],
+      summary: 'Iniciar sesión y obtener el token',
+      security: [], // esta ruta NO requiere token
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              example: { email: 'daniela@inventario.com', password: 'clave-segura' },
+            },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: 'Login correcto',
+          content: {
+            'application/json': {
+              schema: { type: 'object', example: { token: 'eyJhbGciOiJIUzI1NiIs...' } },
+            },
+          },
+        },
+        401: { description: 'Credenciales incorrectas' },
+      },
+    },
+  },
   ...crud('categorias', 'Categorías', { nombre: 'Periféricos', descripcion: 'Mouse, teclados y audífonos' }),
   ...crud('proveedores', 'Proveedores', {
     razon_social: 'Logitech Perú S.A.C.', contacto: 'Carlos Mendoza', telefono: '987654321', email: 'ventas@logitech.pe',
@@ -59,6 +88,12 @@ module.exports = swaggerJsdoc({
   definition: {
     openapi: '3.0.0',
     info: { title: 'miApi - Panel de inventario', version: '2.0.0' },
+    components: {
+      securitySchemes: {
+        bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+      },
+    },
+    security: [{ bearerAuth: [] }], // aplica el token a todas las rutas
     paths,
   },
   apis: [],
