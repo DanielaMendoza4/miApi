@@ -4,16 +4,24 @@ const path = require('path');
 const swaggerUi = require('swagger-ui-express');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET debe estar configurado para iniciar el backend.');
+}
+
 const sequelize = require('./config/db');
 const { Producto, Categoria, Proveedor, Usuario, Movimiento } = require('./models');
 const crud = require('./routes/crud');
 const swaggerSpec = require('./swagger');
 
 const app = express();
+const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 // --- MIDDLEWARES ---
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  origin: corsOrigins,
   credentials: true,
 }));
 app.use(express.json());
@@ -24,6 +32,10 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 // --- RUTA DE PRUEBA ---
 app.get('/', (req, res) => {
   res.send('¡API Backend funcionando exitosamente!');
+});
+
+app.get('/health', (req, res) => {
+  res.json({ ok: true });
 });
 
 // --- RUTAS Y ALIAS /api ---
@@ -99,12 +111,16 @@ const seedInicial = async () => {
 
 // --- SINCRONIZACIÓN Y ARRANQUE ---
 const PORT = process.env.PORT || 3006;
-const alter = true; // Sincroniza columnas nuevas como 'estado' en usuarios
+const syncOptions = process.env.NODE_ENV === 'production'
+  ? {}
+  : { force: false, alter: true };
 
-sequelize.sync({ force: false, alter })
+sequelize.sync(syncOptions)
   .then(async () => {
     console.log('Base de datos conectada y sincronizada.');
-    await seedInicial();
+    if (process.env.NODE_ENV !== 'production') {
+      await seedInicial();
+    }
     app.listen(PORT, () => {
       console.log(`Servidor corriendo en http://localhost:${PORT}`);
     });
