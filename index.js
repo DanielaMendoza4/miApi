@@ -111,11 +111,11 @@ const seedInicial = async () => {
 
 // --- SINCRONIZACIÓN Y ARRANQUE ---
 const PORT = process.env.PORT || 3006;
-const syncOptions = process.env.NODE_ENV === 'production'
-  ? {}
-  : { force: false, alter: true };
+const syncPromise = process.env.NODE_ENV === 'production'
+  ? sequelize.sync()
+  : sequelize.sync({ force: false, alter: true });
 
-sequelize.sync(syncOptions)
+syncPromise
   .then(async () => {
     console.log('Base de datos conectada y sincronizada.');
     if (process.env.NODE_ENV !== 'production') {
