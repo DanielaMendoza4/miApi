@@ -111,20 +111,22 @@ const seedInicial = async () => {
 
 // --- SINCRONIZACIÓN Y ARRANQUE ---
 const PORT = process.env.PORT || 3006;
-const syncPromise = process.env.NODE_ENV === 'production'
-  ? sequelize.sync()
-  : sequelize.sync({ force: false, alter: true });
-
-syncPromise
-  .then(async () => {
+const iniciarServidor = async () => {
+  if (process.env.NODE_ENV !== 'production') {
+    try {
+    await sequelize.sync({ force: false, alter: true });
     console.log('Base de datos conectada y sincronizada.');
-    if (process.env.NODE_ENV !== 'production') {
-      await seedInicial();
-    }
-    app.listen(PORT, () => {
-      console.log(`Servidor corriendo en http://localhost:${PORT}`);
-    });
-  })
-  .catch((error) => {
+    await seedInicial();
+    } catch (error) {
     console.error('Error al conectar con la base de datos:', error);
+    }
+  } else {
+    console.log('Modo producción activo: Sincronización omitida.');
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Servidor corriendo en http://localhost:${PORT}`);
   });
+};
+
+iniciarServidor();
