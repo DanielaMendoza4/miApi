@@ -9,19 +9,32 @@ if (!process.env.JWT_SECRET) {
 }
 
 const sequelize = require('./config/db');
-const { Producto, Categoria, Proveedor, Usuario, Movimiento } = require('./models');
+const { Producto, Categoria, Proveedor, Usuario } = require('./models');
 const crud = require('./routes/crud');
 const swaggerSpec = require('./swagger');
 
+const esProduccion = process.env.NODE_ENV === 'production';
 const app = express();
+
+// Render está detrás de un proxy
+app.set('trust proxy', 1);
+
+// --- CORS ---
 const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-// --- MIDDLEWARES ---
+// Previews de Vercel de tu proyecto (cada deploy puede generar una URL nueva)
+const previewVercel = /^https:\/\/app-inventario-[a-z0-9-]+-danielamendoza4s-projects\.vercel\.app$/;
+
 app.use(cors({
-  origin: corsOrigins,
+  origin: (origin, cb) => {
+    // Peticiones sin Origin (Postman, curl, health checks)
+    if (!origin) return cb(null, true);
+    if (corsOrigins.includes(origin) || previewVercel.test(origin)) return cb(null, true);
+    cb(null, false);
+  },
   credentials: true,
 }));
 app.use(express.json());
@@ -29,13 +42,20 @@ app.use(express.json());
 // --- DOCUMENTACIÓN ---
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
-// --- RUTA DE PRUEBA ---
+// --- RUTAS DE PRUEBA ---
 app.get('/', (req, res) => {
   res.send('¡API Backend funcionando exitosamente!');
 });
 
-app.get('/health', (req, res) => {
-  res.json({ ok: true });
+// Comprueba también que la base de datos responde
+app.get('/health', async (req, res) => {
+  try {
+    await sequelize.authenticate();
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Health check falló:', error.message);
+    res.status(503).json({ ok: false });
+  }
 });
 
 // --- RUTAS Y ALIAS /api ---
@@ -60,32 +80,36 @@ for (const [ruta, handler] of Object.entries(rutas)) {
   app.use(`/api${ruta}`, handler);
 }
 
-// --- SEED INICIAL AUTOMÁTICO ---
+// --- Manejo global de errores ---
+app.use((err, req, res, next) => {
+  console.error('Error no controlado:', err);
+  res.status(500).json({ message: 'Error interno del servidor' });
+});
+
+// --- SEED INICIAL ---
+// Solo crea el admin si defines ADMIN_EMAIL y ADMIN_PASSWORD. No imprime contraseñas.
 const seedInicial = async () => {
   try {
-    const adminEmail = process.env.ADMIN_EMAIL || 'admin@gmail.com';
-    const adminPass = process.env.ADMIN_PASSWORD || 'admin123';
-    const adminUser = await Usuario.unscoped().findOne({ where: { email: adminEmail } });
-    if (!adminUser) {
-      await Usuario.create({
-        nombre: process.env.ADMIN_NOMBRE || 'Daniela Mendoza',
-        email: adminEmail,
-        password: adminPass,
-        rol: 'Administrador',
-        estado: 'Activo',
-      });
-      console.log(`Usuario administrador creado: ${adminEmail} / ${adminPass}`);
+    const adminEmail = process.env.ADMIN_EMAIL;
+    const adminPass = process.env.ADMIN_PASSWORD;
+
+    if (adminEmail && adminPass) {
+      const existe = await Usuario.unscoped().findOne({ where: { email: adminEmail } });
+      if (!existe) {
+        await Usuario.create({
+          nombre: process.env.ADMIN_NOMBRE || 'Administrador',
+          email: adminEmail,
+          password: adminPass,
+          rol: 'Administrador',
+          estado: 'Activo',
+        });
+        console.log(`Usuario administrador creado: ${adminEmail}`);
+      } else {
+        console.log(`El usuario ${adminEmail} ya existe, no se modifica.`);
+      }
     }
 
-    // Si existe daniela@inventario.com, aseguramos su contraseña conocida admin123
-    const daniela = await Usuario.unscoped().findOne({ where: { email: 'daniela@inventario.com' } });
-    if (daniela) {
-      daniela.password = adminPass;
-      await daniela.save();
-    }
-
-    const catCount = await Categoria.count();
-    if (catCount === 0) {
+    if ((await Categoria.count()) === 0) {
       await Categoria.bulkCreate([
         { nombre: 'Periféricos', descripcion: 'Mouse, teclados y accesorios' },
         { nombre: 'Monitores', descripcion: 'Pantallas y monitores LED' },
@@ -94,8 +118,7 @@ const seedInicial = async () => {
       console.log('Categorías iniciales creadas.');
     }
 
-    const provCount = await Proveedor.count();
-    if (provCount === 0) {
+    if ((await Proveedor.count()) === 0) {
       await Proveedor.create({
         razon_social: 'Logitech Perú S.A.C.',
         contacto: 'Carlos Mendoza',
@@ -111,21 +134,30 @@ const seedInicial = async () => {
 
 // --- SINCRONIZACIÓN Y ARRANQUE ---
 const PORT = process.env.PORT || 3006;
+
 const iniciarServidor = async () => {
-  if (process.env.NODE_ENV !== 'production') {
-    try {
-    await sequelize.sync({ force: false, alter: true });
-    console.log('Base de datos conectada y sincronizada.');
-    await seedInicial();
-    } catch (error) {
-    console.error('Error al conectar con la base de datos:', error);
+  try {
+    await sequelize.authenticate();
+    console.log('Conexión a la base de datos OK.');
+
+    if (!esProduccion) {
+      await sequelize.sync({ force: false, alter: true });
+      console.log('Base de datos sincronizada.');
+      await seedInicial();
+    } else if (process.env.DB_SYNC === 'true') {
+      // Solo crea las tablas que faltan, no modifica las existentes
+      await sequelize.sync({ alter: false });
+      console.log('Tablas creadas (DB_SYNC=true).');
+      await seedInicial();
+    } else {
+      console.log('Modo producción: sincronización omitida.');
     }
-  } else {
-    console.log('Modo producción activo: Sincronización omitida.');
+  } catch (error) {
+    console.error('Error al conectar con la base de datos:', error);
   }
 
   app.listen(PORT, () => {
-    console.log(`Servidor corriendo en http://localhost:${PORT}`);
+    console.log(`Servidor corriendo en el puerto ${PORT}`);
   });
 };
 
